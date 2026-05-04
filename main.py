@@ -7,6 +7,7 @@ from python_rotaeno_stabilizer import RotaenoStabilizer
 def find_all_videos():
     """
     寻找videos目录下的所有视频文件，不区分大小写
+    
     :return: 视频列表
     """
     video_dir = os.path.join(os.getcwd(), 'videos')  # 指向videos目录
@@ -23,7 +24,6 @@ def find_all_videos():
                 videos.append(relative_path)
 
     return videos
-
 
 
 if __name__ == '__main__':

@@ -53,7 +53,7 @@ class RotaenoStabilizer:
         self.fps = cap.get(cv2.CAP_PROP_FPS)
 
         if self.video_extension.lower() in self.format_to_fourcc:
-            self.fourcc = cv2.VideoWriter_fourcc(*self.format_to_fourcc[self.video_extension.lower()])
+            self.fourcc = cv2.VideoWriter.fourcc(*self.format_to_fourcc[self.video_extension.lower()])
         else:
             raise ValueError(f"Unsupported video format: {self.video_extension}")
         # self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -62,7 +62,7 @@ class RotaenoStabilizer:
         self.num_cores = os.cpu_count() if os.cpu_count() < 61 else 61
 
     @timer
-    def add_audio_to_video(self, input_video=None, audio=None, verbose=False):
+    def add_audio_to_video(self, input_video=None, audio=None, verbose=True):
         """
         将音频添加到视频中。
 
@@ -94,7 +94,7 @@ class RotaenoStabilizer:
             subprocess.run(command)
 
     @timer
-    def convert_vfr_to_cfr(self, verbose=False):
+    def convert_vfr_to_cfr(self, verbose=True):
         """
         将可变帧率 (VFR) 视频转换为固定帧率 (CFR) 视频。
 
@@ -108,7 +108,6 @@ class RotaenoStabilizer:
             '-c:a', 'copy',  # 复制音频流而不重新编码
             self.cfr_output_path
         ]
-
         if not verbose:
             # 抑制 stdout 和 stderr 输出
             with open(os.devnull, 'wb') as devnull:
@@ -118,7 +117,6 @@ class RotaenoStabilizer:
 
     def get_video_duration(self, video_path):
         """
-
         :param video_path: 视频路径
         :return: 时长
         """
@@ -136,6 +134,7 @@ class RotaenoStabilizer:
     def compute_rotation(self, left_color, right_color, center_color, sample_color):
         """
         根据画面四个角的颜色来计算画面旋转角度
+        
         :param left_color:
         :param right_color:
         :param center_color:
@@ -161,6 +160,7 @@ class RotaenoStabilizer:
     def compute_rotation_v2(self, top_left_color, top_right_color, bottom_left_color, bottom_right_color):
         '''
         根据画面四个角的颜色来计算画面旋转角度
+        
         :param top_left_color: 左上角的颜色 (RGB)
         :param top_right_color: 右上角的颜色 (RGB)
         :param bottom_left_color: 左下角的颜色 (RGB)
@@ -189,7 +189,7 @@ class RotaenoStabilizer:
         return -rotation_degree
 
     @timer
-    def improve_video_quality(self, target_bitrate='50M', verbose=False):
+    def improve_video_quality(self, target_bitrate='50M', verbose=True):
         """
         使用FFmpeg提高视频的码率以改善画质。
 
@@ -221,7 +221,7 @@ class RotaenoStabilizer:
     def process_frame(self, frame):
         height, width, channels = frame.shape
 
-        # Sample colors
+        # Sample colors from the four corners
         O = 5
         S = 3
         bottom_left = frame[height - O:height - O + S, O:O + S].mean(axis=(0, 1))
@@ -236,26 +236,17 @@ class RotaenoStabilizer:
 
         # Rotate frame
         max_size = math.ceil(math.sqrt(width ** 2 + height ** 2))
-        if self.square:  # 方形渲染
-            """
-            设手机尺寸为a*b, 长a, 宽b
-            判定环内径: (1050**2+888**2)**0.5 1383/888
-                l = 1.1824324324 * b
-                ((1.1824324324**2+1)**0.5 * height + 7)
-            判定环宽度: 14 (1216宽度下是17)
-            
-            如果录屏的长宽比小于1.7763157895,则将宽度设置成 长度/1.7763157895
-            """
-            # max_size = max(height, width)
+        if self.square:
+            # 创建带有白色圆环的黑色背景
             background_frame = np.zeros((max_size, max_size, 3), dtype='uint8')
-
-            # 在背景上绘制圆环
+            
+            # 在黑色背景上绘制白色圆环
             real_height = height if width / height >= 1.7763157895 else width / 1.7763157895
             circle_center = (max_size // 2, max_size // 2)
             circle_radius = (1.5574 * real_height) // 2
-            circle_thickness = int(3 / 328 * real_height - 46 / 41)  # 圆环的宽度，比如15px
+            circle_thickness = int(3 / 328 * real_height - 46 / 41)
             cv2.circle(background_frame, circle_center, math.ceil(circle_radius), (255, 255, 255),
-                       thickness=circle_thickness)
+                    thickness=circle_thickness)
 
             # 将原始视频帧放置在中间
             expanded_frame = np.zeros((max_size, max_size, 3), dtype='uint8')
@@ -266,27 +257,33 @@ class RotaenoStabilizer:
             # 对扩展帧进行旋转
             M = cv2.getRotationMatrix2D((max_size // 2, max_size // 2), angle, 1)
             rotated_frame = cv2.warpAffine(expanded_frame, M, (max_size, max_size))
-
-            # 创建掩码以识别非黑色像素
-            _, mask = cv2.threshold(cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2GRAY), 1, 255, cv2.THRESH_BINARY)
-
-            # 使用掩码叠加非黑色像素到背景帧
-            background_frame_masked = cv2.bitwise_and(background_frame, background_frame, mask=cv2.bitwise_not(mask))
-            rotated_frame_masked = cv2.bitwise_and(rotated_frame, rotated_frame, mask=mask)
-            combined_frame = cv2.add(background_frame_masked, rotated_frame_masked)
+            
+            # 创建一个与原扩展帧相同大小的掩码，只标记原始视频帧区域，初始为全0
+            mask = np.zeros((max_size, max_size), dtype='uint8')
+            # 在掩码上标记原始视频帧的位置
+            mask[y_offset:y_offset + height, x_offset:x_offset + width] = 255
+            
+            # 旋转掩码（与扩展帧相同的变换）
+            rotated_mask = cv2.warpAffine(mask, M, (max_size, max_size))
+            
+            # 使用掩码将旋转后的视频帧叠加到背景上，只覆盖旋转后的视频帧区域，其他区域显示背景圆环
+            rotated_frame_masked = cv2.bitwise_and(rotated_frame, rotated_frame, mask=rotated_mask)
+            background_masked = cv2.bitwise_and(background_frame, background_frame, 
+                                            mask=cv2.bitwise_not(rotated_mask))
+            combined_frame = cv2.add(background_masked, rotated_frame_masked)
+            
             return combined_frame
         else:
             M = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
             rotated_frame = cv2.warpAffine(frame, M, (width, height))
+            return rotated_frame
 
-        return rotated_frame
-
-    def process_video(self, group_number, frame_jump_unit):
+    def process_video(self, group_number, frame_jump_unit, progress_dict):
         cap = cv2.VideoCapture(self.cfr_output_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_jump_unit * group_number)
         proc_frames = 0
         inter_output_path = os.path.join(os.getcwd(), 'output',
-                                         "{}.{}".format(group_number, f'{self.video_extension.lower()[1:]}'))
+                                        "{}.{}".format(group_number, f'{self.video_extension.lower()[1:]}'))
 
         frame_size = math.ceil(math.sqrt(int(cap.get(3)) ** 2 + int(cap.get(4)) ** 2))
         if self.square:  # 方形
@@ -294,6 +291,8 @@ class RotaenoStabilizer:
         else:
             out = cv2.VideoWriter(inter_output_path, self.fourcc, self.fps, (int(cap.get(3)), int(cap.get(4))))
 
+        update_interval = max(1, frame_jump_unit // 100)  # 每1%更新一次
+    
         while proc_frames < frame_jump_unit:
             ret, frame = cap.read()
             if ret:
@@ -301,12 +300,19 @@ class RotaenoStabilizer:
             else:
                 print("Error reading frame")
             proc_frames += 1
-
+                
+            # 定期更新进度
+            if proc_frames % update_interval == 0:
+                progress_dict[group_number] = proc_frames
+            
+        # 最终更新
+        progress_dict[group_number] = frame_jump_unit
+            
         cap.release()
         out.release()
         return None
 
-    def concatenate_videos(self, verbose=False):
+    def concatenate_videos(self, verbose=True):
         # 构建 FFmpeg 命令
         cmd = [
             'ffmpeg',
@@ -332,17 +338,84 @@ class RotaenoStabilizer:
         在output文件夹中输出渲染完毕的视频
         """
         cap2 = cv2.VideoCapture(self.cfr_output_path)
-        frame_jump_unit = cap2.get(cv2.CAP_PROP_FRAME_COUNT) // self.num_cores  # 每个进程处理的帧数
+        total_frames = int(cap2.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_jump_unit = total_frames // self.num_cores  # 每个进程处理的帧数
+        fps = cap2.get(cv2.CAP_PROP_FPS)
+        duration = total_frames / fps if fps > 0 else 0
         cap2.release()
-
+        
+        print(f"开始渲染: {total_frames}帧, {fps:.2f}fps, 时长: {duration:.2f}秒")
+        print(f"使用 {self.num_cores} 个核心，每个核心处理 {frame_jump_unit} 帧")
+        
+        start_time = time.time()
+        
+        # 使用manager创建共享变量来追踪进度
+        manager = mp.Manager()
+        progress_dict = manager.dict()
+        for i in range(self.num_cores):
+            progress_dict[i] = 0
+            
+        # 启动进程池
         p = mp.Pool(self.num_cores)
-        video_list = range(self.num_cores)
-        video_list = [(item, frame_jump_unit) for item in video_list]
-        p.starmap(self.process_video, video_list)  # 多进程开始
+        video_list = [(i, frame_jump_unit, progress_dict) for i in range(self.num_cores)]
+        result = p.starmap_async(self.process_video, video_list)
+        
+        # 显示FFmpeg风格的进度
+        last_update = time.time()
+        last_frame = 0
+        
+        while not result.ready():
+            time.sleep(0.5)  # 每0.5秒更新一次
+            
+            current_time = time.time()
+            elapsed = current_time - start_time
+            
+            # 计算总进度
+            total_processed = sum(progress_dict.values())
+            
+            if total_processed <= last_frame and current_time - last_update < 1:
+                continue
 
+            # 计算帧率
+            if elapsed > 0:
+                current_fps = total_processed / elapsed
+            else:
+                current_fps = 0
+               
+            # 计算预计剩余时间
+            if total_processed > 0 and current_fps > 0:
+                remaining_frames = total_frames - total_processed
+                eta = remaining_frames / current_fps
+                eta_str = time.strftime("%H:%M:%S", time.gmtime(eta))
+            else:
+                eta_str = "N/A"
+                
+            # 计算进度百分比
+            percent = (total_processed / total_frames) * 100 if total_frames > 0 else 0
+                
+            # 计算已处理时间
+            processed_time = total_processed / fps if fps > 0 else 0
+            
+            # FFmpeg风格输出
+            print(f"\rframe={total_processed:6d} fps={current_fps:4.1f} progress={percent:5.1f}% "
+                  f"time={processed_time:02.0f}:{processed_time%60:04.1f} "
+                  f"bitrate=N/A speed={current_fps/fps if fps>0 else 0:.3f}x "
+                  f"eta={eta_str}", end="", flush=True)
+                
+            last_update = current_time
+            last_frame = total_processed
+        
+        # 完成
+        total_time = time.time() - start_time
+        print(f"\r渲染完成! 总用时: {total_time:.2f}秒, 平均帧率: {total_frames/total_time:.2f}fps")
+        
+        p.close()
+        p.join()
+        
+        print("正在拼接视频片段...")
+        
         intermediate_files = ["{}.{}".format(i, f'{self.video_extension.lower()[1:]}') for i in range(self.num_cores)]
-        # print(intermediate_files)
-
+        
         with open("output/intermediate_files.txt", "w") as f:
             for t in intermediate_files:
                 f.write("file {} \n".format(t))
