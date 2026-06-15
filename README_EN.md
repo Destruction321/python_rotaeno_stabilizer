@@ -23,7 +23,7 @@ in live broadcast mode. The goal is to stabilize the video image.
    - Replaced `opencv-contrib-python` with `opencv-python` + `types-opencv-python` for full type support
    - Removed unused `tqdm` dependency
 
-2. Code quality
+2. Code refactoring
 
    - Migrated from `os.path` to `pathlib.Path`, removed `os` module dependency
    - Eliminated built-in name shadowing (`type`→`mode`, `dir`→`direction`, `array`→`bits`)
