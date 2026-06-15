@@ -3,6 +3,7 @@ from functools import wraps
 from math import ceil, sqrt
 from multiprocessing import Pool, Manager, cpu_count
 from pathlib import Path
+from shutil import which
 from subprocess import run, PIPE, STDOUT, DEVNULL
 from time import time, sleep, strftime, gmtime
 from typing import Any, TypeVar, cast
@@ -10,7 +11,6 @@ from typing import Any, TypeVar, cast
 import cv2
 from numpy import zeros, array, ndarray
 from numpy.linalg import norm
-import shutil
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -480,9 +480,9 @@ class RotaenoStabilizer:
         """
         :return: 无返回值，在output文件夹输出渲染完毕的视频
         """
-        if not shutil.which('ffmpeg'):
+        if not which('ffmpeg'):
             raise RuntimeError("未找到 ffmpeg，请确保已安装并添加到 PATH")
-        if not shutil.which('ffprobe'):
+        if not which('ffprobe'):
             raise RuntimeError("未找到 ffprobe，请确保已安装并添加到 PATH")
 
         print("正在将视频转换为CFR视频……")
