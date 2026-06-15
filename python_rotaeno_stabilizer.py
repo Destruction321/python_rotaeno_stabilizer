@@ -1,27 +1,32 @@
+from collections.abc import Callable
 from functools import wraps
 from math import ceil, sqrt
 from multiprocessing import Pool, Manager, cpu_count
 from pathlib import Path
 from subprocess import run, PIPE, STDOUT, DEVNULL
 from time import time, sleep, strftime, gmtime
+from typing import Any, TypeVar, cast
 
 import cv2
-from numpy import zeros, array
+from numpy import zeros, array, ndarray
 from numpy.linalg import norm
 import shutil
 
 
-def _timer(fn):
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _timer(fn: F) -> F:
     """计算性能的修饰器"""
     @wraps(fn)
-    def measure_time(*args, **kwargs):
+    def measure_time(*args: Any, **kwargs: Any) -> Any:
         t1 = time()
         result = fn(*args, **kwargs)
         t2 = time()
         print(f"@timer: {fn.__name__} took {t2 - t1: .5f} s")
         return result
 
-    return measure_time
+    return cast(F, measure_time)
 
 
 class RotaenoStabilizer:
@@ -34,7 +39,7 @@ class RotaenoStabilizer:
         '.flv': 'FLV1'
     }
 
-    def __init__(self, video, mode="v2", square=True):
+    def __init__(self, video: str, mode: str = "v2", square: bool = True) -> None:
         self._mode = mode
         self._square = square
 
@@ -68,7 +73,10 @@ class RotaenoStabilizer:
         self._num_cores = min(cpu_count() or 1, 61)
 
     @_timer
-    def _add_audio_to_video(self, input_video=None, audio=None, verbose=True):
+    def _add_audio_to_video(self,
+                            input_video: str | None = None,
+                            audio: str | None = None,
+                            verbose: bool = True) -> None:
         """
         将音频添加到视频中。
 
@@ -99,7 +107,7 @@ class RotaenoStabilizer:
             run(command)
 
     @_timer
-    def _convert_vfr_to_cfr(self, verbose=True):
+    def _convert_vfr_to_cfr(self, verbose: bool = True) -> None:
         """
         将可变帧率 (VFR) 视频转换为固定帧率 (CFR) 视频。
 
@@ -119,7 +127,7 @@ class RotaenoStabilizer:
         else:
             run(cmd)
 
-    def _get_video_duration(self, video_path):
+    def _get_video_duration(self, video_path: str) -> float:
         """
         :param video_path: 视频路径
         :return: 时长
@@ -135,7 +143,11 @@ class RotaenoStabilizer:
         result = run(cmd, stdout=PIPE, stderr=STDOUT)
         return float(result.stdout)
 
-    def _compute_rotation(self, left_color, right_color, center_color, sample_color):
+    def _compute_rotation(self,
+                          left_color: ndarray,
+                          right_color: ndarray,
+                          center_color: ndarray,
+                          sample_color: ndarray) -> float:
         """
         根据画面四个角的颜色来计算画面旋转角度
         
@@ -159,9 +171,13 @@ class RotaenoStabilizer:
             angle = (centerDist - leftLength) / leftLength * 180.0 * direction + OffsetDegree
 
         # 注意，如果旋转方向是相反的，只需返回-angle即可
-        return -angle
+        return -float(angle)
 
-    def _compute_rotation_v2(self, top_left_color, top_right_color, bottom_left_color, bottom_right_color):
+    def _compute_rotation_v2(self,
+                             top_left_color: ndarray,
+                             top_right_color: ndarray,
+                             bottom_left_color: ndarray,
+                             bottom_right_color: ndarray) -> float:
         '''
         根据画面四个角的颜色来计算画面旋转角度
         
@@ -173,7 +189,7 @@ class RotaenoStabilizer:
         '''
 
         # 将RGB值转换为0或1
-        def convert_color_to_binary(color):
+        def convert_color_to_binary(color: ndarray) -> list[int]:
             bits = [1 if c >= 255 / 2 else 0 for c in color]
             return bits[::-1]  # OpenCV的BGR顺序和RGB相反
 
@@ -194,7 +210,7 @@ class RotaenoStabilizer:
 
         return -rotation_degree
 
-    def _reencode_output(self, crf=28, preset='medium', verbose=True):
+    def _reencode_output(self, crf: int = 28, preset: str = 'medium', verbose: bool = True) -> None:
         """
         使用 FFmpeg 重编码拼接后的视频以控制码率。
 
@@ -230,7 +246,7 @@ class RotaenoStabilizer:
         if verbose:
             print(f"视频重编码完成 (CRF {crf})")
 
-    def _get_background_frame(self, height, width, max_size):
+    def _get_background_frame(self, height: int, width: int, max_size: int) -> ndarray:
         """缓存并返回带白色圆环的背景帧，避免每帧重建。"""
         key = (height, width)
         if not hasattr(self, '_bg_cache') or self._bg_cache[0] != key:
@@ -244,7 +260,7 @@ class RotaenoStabilizer:
         
         return self._bg_cache[1]
 
-    def _process_frame(self, frame):
+    def _process_frame(self, frame: ndarray) -> ndarray:
         height, width, _ = frame.shape
 
         # Sample colors from the four corners
@@ -295,7 +311,7 @@ class RotaenoStabilizer:
         )        
         return cv2.add(background_masked, rotated_frame_masked)
 
-    def _process_video(self, group_number, start_position, frame_count, progress_dict):
+    def _process_video(self, group_number: int, start_position: int, frame_count: int, progress_dict: dict) -> None:
         cap = cv2.VideoCapture(self._cfr_output_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_position)
         proc_frames = 0
@@ -330,7 +346,7 @@ class RotaenoStabilizer:
         out.release()
         return None
 
-    def _concatenate_videos(self, verbose=True):
+    def _concatenate_videos(self, verbose: bool = True) -> None:
         # 构建 FFmpeg 命令
         cmd = [
             'ffmpeg',
@@ -349,7 +365,7 @@ class RotaenoStabilizer:
             run(cmd)
 
     @_timer
-    def _render(self):
+    def _render(self) -> None:
         """
         :return: 无返回值：
         在output文件夹中输出渲染完毕的视频
@@ -460,7 +476,7 @@ class RotaenoStabilizer:
             (output_dir / f).unlink()
         (output_dir / "intermediate_files.txt").unlink()
 
-    def run(self):  # 渲染方形视频
+    def run(self) -> None:  # 渲染方形视频
         """
         :return: 无返回值，在output文件夹输出渲染完毕的视频
         """

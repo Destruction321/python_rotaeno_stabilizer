@@ -29,6 +29,7 @@ in live broadcast mode. The goal is to stabilize the video image.
    - Eliminated built-in name shadowing (`type`→`mode`, `dir`→`direction`, `array`→`bits`)
    - Made internal attributes/methods private (single `_` prefix), cleaner public API
    - Fixed all Pyright type checking errors
+   - Added full type annotations for all function parameters and return values
 
 3. Bug fixes
 

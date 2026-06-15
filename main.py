@@ -3,7 +3,7 @@ from time import time
 
 from python_rotaeno_stabilizer import RotaenoStabilizer
 
-def find_all_videos():
+def find_all_videos() -> list[str]:
     """
     寻找videos目录下的所有视频文件，不区分大小写
     
