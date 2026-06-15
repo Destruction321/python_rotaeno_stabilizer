@@ -1,0 +1,19 @@
+[project]
+name = "python-rotaeno-stabilizer"
+version = "0.1.0"
+description = "基于Python的Rotaeno录屏稳定脚本，通过直播模式下录屏画面四角的颜色旋转帧来稳定视频画面"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mpmath",
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "psutil",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.410",
+    "types-opencv-python",
+]
